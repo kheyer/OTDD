@@ -136,7 +136,9 @@ plot_coupling(coupling, OTDD_matrix, mnist.labels, usps.labels,
               classes, classes, figsize=(8,8))
 ```
 
-![coupling plot](https://github.com/kheyer/OTDD/blob/main/media/coupling.png){:height="50%" width="50%"}
+![coupling plot](https://github.com/kheyer/OTDD/blob/main/media/coupling.png)
+
+A heatmap of class distances
 
 ```
 plot_class_distances(class_distances, mnist.classes, usps.classes, 
@@ -145,12 +147,16 @@ plot_class_distances(class_distances, mnist.classes, usps.classes,
 
 ![class distance heatmap](https://github.com/kheyer/OTDD/blob/main/media/heatmap.png)
 
+The coupling network based on 2d embeddings
+
 ```
 plot_coupling_network(mnist_emb, usps_emb, mnist_sample.labels, 
                       usps_sample.labels, coupling, plot_type='hv')
 ```
 
 <img src="https://github.com/kheyer/OTDD/blob/main/media/connectivity.png" width="500">
+
+If the coupling network is too dense to plot well, we can plot the k strongest connections
 
 ```
 plot_network_k_connections(mnist_emb, usps_emb, mnist_sample.labels, 
