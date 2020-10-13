@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 from scipy import linalg
 from multiprocessing import Pool
 
+# Data Classes
+
 class ArrayDataset():
     '''
     ArrayDataset - base class for array data
@@ -66,7 +68,7 @@ class ArrayDataset():
 
         return ArrayDataset(sample_vecs, sample_labels)
 
-    
+# Distance classes
     
 class DistanceFunction():
     '''
@@ -124,6 +126,9 @@ class POTDistance(DistanceFunction):
             M_dist = self.mask_diagonal(M_dist)
             
         return M_dist
+
+
+# Cost Functions
 
 class CostFunction():
     '''
@@ -336,6 +341,9 @@ class CostFunction():
             sample_size_x - int - sample size for dataset_x
             dataset_y - ArrayDataset, None - if None, function will run intra-sampling on dataset_x
             sample_size_y - int - sample size for dataset_y if not None
+            max_iter - int, None - max iterations for `cost_function`. If None, 
+                                                default value in `cost_function` is used
+            gaussian - bool - if True, OT distance will be calculated with Gaussian approximation
         
         Returns:
             distances - ndarray - array of size (num_iterations,) with bootstrap distance values
@@ -366,14 +374,22 @@ class CostFunction():
     def bootstrap_label_distance(self, num_iterations, dataset_x, sample_size_x, 
                                            dataset_y=None, sample_size_y=None, 
                                            min_labelcount=None, max_iter=None):
-        
-        # TODO: bootstrap routine based on class to build class distance matrix proper and avoid instability
-
         '''
-        Notes on improving this. Currently gaussian class distance calculation is slow and unstable for small samples.
-        There should be an initial routine that samples from each dataset classwise to build the class distance matrix.
-        Then that distance matrix should be applied for all bootstrap samples.
-        This could 
+        bootstrap_label_distance - estimates the OTDD cost over the entire dataset using bootstrap sampling
+        
+        Inputs:
+            num_iterations - int - number of samples
+            dataset_x - ArrayDataset
+            sample_size_x - int - sample size for dataset_x
+            dataset_y - ArrayDataset, None - if None, function will run intra-sampling on dataset_x
+            sample_size_y - int - sample size for dataset_y if not None
+            min_labelcount - float, None - minimum class representation in each bootstrap sample (if None will be ignored)
+            max_iter - int, None - max iterations for `cost_function`. If None, 
+                                                default value in `cost_function` is used
+
+        
+        Returns:
+            distances - ndarray - array of size (num_iterations,) with bootstrap distance values
         '''
 
         distances = []
@@ -422,32 +438,11 @@ class CostFunction():
             distances.append(cost)
 
         return distances
-
-        # distances = []
-        
-        # for i in range(num_iterations):
-            
-        #     if dataset_y is not None:
-        #         sample_x, label_x = dataset_x.sample_with_label(sample_size_x)
-        #         sample_y, label_y = dataset_y.sample_with_label(sample_size_y)
-        #     else:
-        #         sample, label = dataset_x.sample_with_label(sample_size_x*2)
-        #         sample_x, label_x = sample[:sample_size_x], label[:sample_size_x]
-        #         sample_y, label_y = sample[sample_size_x:], label[sample_size_x:]
-            
-        #     sample_x, label_x = self.filter_labels(sample_x, label_x, min_labelcount)
-        #     sample_y, label_y = self.filter_labels(sample_y, label_y, min_labelcount)
-            
-        #     cost, _, _, _, _, _ = self.distance_with_labels(
-        #                             sample_x, sample_y, label_x, label_y, 
-        #                             max_iter=max_iter, gaussian_class_distance=gaussian_class_distance,
-        #                             gaussian_data_distance=gaussian_data_distance)
-            
-        #     distances.append(cost)
-            
-        # return distances
     
     def filter_labels(self, x_vals, x_labels, min_labelcount):
+        '''
+        filter_labels - filters `x_vals` and `x_labels` to remove classes that do not have `min_labelcount` members
+        '''
         
         if min_labelcount is not None:
             label_counter = Counter(x_labels)
