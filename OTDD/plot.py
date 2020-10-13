@@ -91,8 +91,6 @@ def plot_class_distances(class_distances, row_classes, col_classes,
             
     return ax
 
-
-
 def plot_connection_graph_ds(node_df, edge_df):
 
     x_min = node_df.x.min()*1.01
@@ -124,7 +122,7 @@ def plot_connection_graph_hv(node_df, edge_df):
     graph = hv.Graph((edge_df, nodes))
 
     layout = (datashade(graph, normalization='log', cmap=['#000000'], alpha=150) *
-            nodes.opts(size=5, color='cat', cmap='Category20')).opts(height=1000, width=1000)
+            nodes.opts(size=5, color='cat', cmap='Category20')).opts(height=600, width=600)
     
     return layout
 
@@ -144,8 +142,7 @@ def plot_connection_graph_mpl(node_df, edge_df):
 
     legend1 = ax.legend(*scatter.legend_elements(), title="Classes")
     ax.add_artist(legend1)
-
-    
+   
 def merge_plot_data(xs, ys, x_idxs, y_idxs, x_labels, y_labels):
     node_df = pd.DataFrame(np.concatenate([xs, ys]), columns=['x', 'y'])
     
@@ -162,7 +159,7 @@ def plot_from_idxs(xs, ys, x_idxs, y_idxs, x_labels, y_labels, plot_type='ds'):
     
     if plot_type == 'ds':
         plot = plot_connection_graph_ds(node_df, edge_df)
-    elif plot_type == 'mlp':
+    elif plot_type == 'mpl':
         plot = plot_connection_graph_mpl(node_df, edge_df)
     else:
         plot = plot_connection_graph_hv(node_df, edge_df)
