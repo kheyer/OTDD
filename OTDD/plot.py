@@ -32,7 +32,7 @@ def plot_coupling(coupling, distance_matrix, row_labels, col_labels,
         num_class = (row_labels==c).sum()
         y_ticks.append((row+num_class//2)*plt_im.shape[0]/y_max)
         row += num_class
-        ax.axhline((y_max-row)*plt_im.shape[0]/y_max, c='k', alpha=0.5)
+        ax.axhline((row)*plt_im.shape[0]/y_max, c='k', alpha=0.5)
 
     col = 0
     x_ticks = []
@@ -50,14 +50,15 @@ def plot_coupling(coupling, distance_matrix, row_labels, col_labels,
     ax.set_ylim(plt_im.shape[0], 0)
 
     ax.set_xticklabels(col_classes)
-    ax.set_yticklabels(row_classes[::-1])
+    ax.set_yticklabels(row_classes)
 
     ax.tick_params(top=True, bottom=False,
                 labeltop=True, labelbottom=False)
 
     return ax
 
-def plot_class_distances(class_distances, row_classes, col_classes, cmap='OrRd', figsize=(8,8)):
+def plot_class_distances(class_distances, row_classes, col_classes, 
+                            cmap='OrRd', figsize=(8,8), text=True):
     
     fig, ax = plt.subplots(figsize=figsize)
     im = ax.imshow(class_distances, cmap=cmap)
@@ -81,7 +82,13 @@ def plot_class_distances(class_distances, row_classes, col_classes, cmap='OrRd',
     ax.set_yticks(np.arange(class_distances.shape[0]+1)-.5, minor=True)
     ax.grid(which="minor", color="w", linestyle='-', linewidth=3)
     ax.tick_params(which="minor", bottom=False, left=False)
-    
+
+    if text:
+        for i in range(class_distances.shape[0]):
+            for j in range(class_distances.shape[1]):
+                text = ax.text(j, i, f'{class_distances[i, j]:.1f}',
+                            ha="center", va="center", color="w")
+            
     return ax
 
 

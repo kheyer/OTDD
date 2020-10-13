@@ -20,6 +20,7 @@ class ArrayDataset():
         if labels is None:
             labels = np.array([0 for i in range(features.shape[0])])
         self.labels = labels
+        self.classes = sorted(list(set(self.labels)))
         
     def __len__(self):
         return self.features.shape[0]
@@ -45,6 +46,26 @@ class ArrayDataset():
         sample = self.features[sample_idxs]
 
         return sample
+
+    def subsample(self, total_size, equal_classes=True):
+
+        idxs = np.arange(self.features.shape[0])
+
+        if equal_classes:
+            n_samp = total_size//len(self.classes)
+            sample_idx = []
+            for c in self.classes:
+                sample_idx += list(np.random.choice(idxs[self.labels==c],
+                                            min(n_samp, (self.labels==c).sum()), replace=False))
+        else:
+            sample_idx = np.random.choice(idxs,
+                                        min(total_size, self.features.shape[0]), replace=False)
+
+        sample_vecs = self.features[sample_idx]
+        sample_labels = self.labels[sample_idx]
+
+        return ArrayDataset(sample_vecs, sample_labels)
+
     
     
 class DistanceFunction():
@@ -505,7 +526,7 @@ class SinkhornCost(CostFunction):
         return cost, coupling
     
 
-def gaussian_distance_from_stats(mu_x, sigma_x, mu_y, sigma_y):
+def gaussian_distance_from_stats(mu_x, sigma_x, mu_y, sigma_y, eps=1e-6):
     '''
     gaussian_distance - measures the 2-Wasserstein distance using gaussian approximations,
                             also called the Frechet distance
