@@ -267,6 +267,8 @@ class CostFunction():
                     cost, coupling, M_dist = self.distance(sample_x, sample_y, max_iter=max_iter)                
                 
                 distances[i,j] = cost
+
+        print('distance finished')
                 
         return distances, class_x_dict, class_y_dict
     
@@ -308,6 +310,7 @@ class CostFunction():
             dz = np.zeros(M_dist.shape)
 
             # TODO: vectorize this
+            print('indexing')
             for i in range(M_dist.shape[0]):
                 for j in range(M_dist.shape[1]):
                     c1 = class_x_dict[x_labels[i]]
@@ -324,6 +327,7 @@ class CostFunction():
         if mask_diagonal:
             OTDD_matrix = self.distance_function.mask_diagonal(OTDD_matrix)
         
+        print('final cost')
         cost, coupling = self.cost_function(None, None, OTDD_matrix, max_iter)
         
         return cost, coupling, OTDD_matrix, class_distances, class_x_dict, class_y_dict

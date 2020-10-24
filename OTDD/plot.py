@@ -49,7 +49,7 @@ def plot_coupling(coupling, distance_matrix, row_labels, col_labels,
     ax.set_xlim(0, plt_im.shape[1])
     ax.set_ylim(plt_im.shape[0], 0)
 
-    ax.set_xticklabels(col_classes)
+    ax.set_xticklabels(col_classes, rotation=90)
     ax.set_yticklabels(row_classes)
 
     ax.tick_params(top=True, bottom=False,
@@ -69,7 +69,7 @@ def plot_class_distances(class_distances, row_classes, col_classes,
     ax.set_xticks(np.arange(class_distances.shape[1]))
     ax.set_yticks(np.arange(class_distances.shape[0]))
 
-    ax.set_xticklabels(col_classes)
+    ax.set_xticklabels(col_classes, rotation=90)
     ax.set_yticklabels(row_classes)
 
     ax.tick_params(top=True, bottom=False,
@@ -86,7 +86,7 @@ def plot_class_distances(class_distances, row_classes, col_classes,
     if text:
         for i in range(class_distances.shape[0]):
             for j in range(class_distances.shape[1]):
-                text = ax.text(j, i, f'{class_distances[i, j]:.1f}',
+                text = ax.text(j, i, f'{class_distances[i, j]:.2f}',
                             ha="center", va="center", color="w")
             
     return ax

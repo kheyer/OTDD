@@ -15,7 +15,7 @@ ex:
 ```
 distance_function = POTDistance(distance_metric='euclidean')
 cost_function = SinkhornCost(distance_function, entropy=0.2)
-cost, coupling, M_dist = cost_function.distance(self, x_vals, y_vals)
+cost, coupling, M_dist = cost_function.distance(x_vals, y_vals)
 ```
 
 `cost` is the transport cost between datasets. `coupling` is the coupling matrix solved by the `cost_function` and `M_dist` is the distnce matrix calculated by `distance_function`.
@@ -38,7 +38,7 @@ ex:
 ```
 distance_function = POTDistance(distance_metric='euclidean')
 cost_function = SinkhornCost(distance_function, entropy=0.2)
-cost, coupling, OTDD_matrix, class_distances, class_x_dict, class_y_dict = cost_function.distance_with_labels(self, x_vals, y_vals, x_labels, y_label)
+cost, coupling, OTDD_matrix, class_distances, class_x_dict, class_y_dict = cost_function.distance_with_labels(x_vals, y_vals, x_labels, y_label)
 ```
 
 `cost` is the OTDD transport cost between datasets. `coupling` is the coupling matrix solved by the `cost_function` and `OTDD_matrix` is the distnce matrix calculated by `distance_function` with label-to-label distances. `class_distances` is the matrix of label-to-label distances between datasets. `class_x_dict` and `class_y_dict` map label values in `x_labels` and `y_labels` to index values in `class_distances`
