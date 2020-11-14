@@ -1,6 +1,7 @@
 import numpy as np
 import os
 import ot
+import cvxpy as cp
 from collections import Counter
 import matplotlib.pyplot as plt
 from scipy import linalg
@@ -501,7 +502,7 @@ class SinkhornCost(CostFunction):
         default_max_iter - int, default max iteration value for cost calculation
     '''
     def __init__(self, distance_function, entropy, default_max_iter=1000, method='sinkhorn'):
-        super().__init__(distance_function, default_max_iter=1000)
+        super().__init__(distance_function, default_max_iter=default_max_iter)
         
         self.entropy = entropy
         self.method = 'sinkhorn'
@@ -523,6 +524,190 @@ class SinkhornCost(CostFunction):
         cost = (coupling*M_dist).sum()
         
         return cost, coupling
+
+class CVXPYSolver():
+    '''
+    CVXPYSolver - Base class for cvxpy solvers designed to give a unified API for solvers with different args
+    '''
+    def solve(self, objective, constraints, max_iter):
+        
+        prob = cp.Problem(objective, constraints)
+        
+        result = self.solve_problem(prob, max_iter)
+                
+        if (not prob.status == 'optimal') and self.second_solve:
+            print("Optimal solution not reached, trying second solve")
+            result = self.solve_problem(prob, max_iter)
+            
+        return result
+    
+    def solve_problem(self, problem, max_iter):
+        raise NotImplementedError
+    
+        
+class SCSSolver(CVXPYSolver):
+    '''
+    SCSSolver - cvxpy solver using the SCS optimization package
+    
+    Inputs:
+        eps - convergence tolerance
+        alpha - relaxation parameter
+        scale - balance between minimizing primal and dual residual
+        normalize - whether to precondition data matrices
+        use_indirect - whether to use indirect solver for KKT sytem (instead of direct)
+    '''
+    def __init__(self, eps=1e-4, alpha=1.8, scale=5.0, 
+                 normalize=True, use_indirect=True, max_iter=1000,
+                 second_solve=False):
+        super().__init__()
+        
+        self.solver = 'SCS'
+        self.eps = eps
+        self.alpha = alpha
+        self.scale = scale
+        self.normalize = normalize
+        self.use_indirect = use_indirect
+        self.max_iter = max_iter
+        self.second_solve = second_solve
+        
+    def solve_problem(self, problem, max_iter):
+        result = problem.solve(solver=self.solver, max_iters=max_iter, verbose=True,
+                               eps=self.eps, alpha=self.alpha, scale=self.scale,
+                               normalize=self.normalize, use_indirect=self.use_indirect)
+        
+        return result
+    
+    
+class ECOSSolver(CVXPYSolver):
+    '''
+    ECOSSolver - cvxpy solver using the ECOS optimization package
+    
+    Inputs:
+        abstol - absolute accuracy
+        reltol - relative accuracy
+        feastol - tolerance for feasibility conditions
+        abstol_inacc - absolute accuracy for inaccurate solution
+        reltol_inacc - relative accuracy for inaccurate solution
+        feastol_inacc - tolerance for feasibility condition for inaccurate solution
+
+    '''
+    def __init__(self, abstol=1e-8, reltol=1e-8, feastol=1e-8,
+                 abstol_inacc=5e-5, reltol_inacc=5e-5, 
+                 feastol_inacc=1e-4, max_iter=1000, second_solve=False):
+        super().__init__()
+        
+        self.solver = 'ECOS'
+        self.abstol = abstol
+        self.reltol = reltol
+        self.feastol = feastol
+        self.abstol_inacc = abstol_inacc
+        self.reltol_inacc = reltol_inacc
+        self.feastol_inacc = feastol_inacc
+        self.second_solve = second_solve
+        self.max_iter = max_iter
+        
+    def solve_problem(self, problem, max_iter):
+        result = problem.solve(solver=self.solver, max_iters=max_iter, verbose=True,
+                               abstol=self.abstol, reltol=self.reltol, feastol=self.feastol,
+                               abstol_inacc=self.abstol_inacc, reltol_inacc=self.reltol_inacc,
+                               feastol_inacc = self.feastol_inacc)
+        
+        return result
+
+class RobustOTCost(CostFunction):
+    '''
+    RobustOT - Implements Robust Optimal Transport from arxiv.org/abs/2010.05862
+               Implementation based on github.com/yogeshbalaji/robustOT/blob/main/discrete_distributions/solvers/ROT.py
+    Inputs:
+        distance_function - subclass of DistanceFunction
+        rho - optimization constraint described in the paper
+        solver - subclass of CVXPYSolver
+    '''
+    def __init__(self, distance_function, rho, solver):
+        super().__init__(distance_function, default_max_iter=solver.max_iter)
+    
+        self.rho = rho
+        self.solver = solver
+        
+    def cost_function(self, x_weights, y_weights, M_dist, max_iter):
+        
+        if x_weights is None:
+            x_weights = self.get_sample_weights(M_dist.shape[0])
+        
+        if y_weights is None:
+            y_weights = self.get_sample_weights(M_dist.shape[1])
+            
+        max_iter = self.get_iter(max_iter)
+            
+        x_weights = np.expand_dims(x_weights, axis=1)
+        y_weights = np.expand_dims(y_weights, axis=1)
+            
+        x_shape, y_shape = M_dist.shape
+            
+        P = cp.Variable((x_shape, y_shape))
+        
+        a_tilde = cp.Variable((x_shape, 1))
+        b_tilde = cp.Variable((y_shape, 1))
+        
+        u = np.ones((y_shape, 1))
+        v = np.ones((x_shape, 1))
+        
+        constraints = self.get_constraints(P, u, v, a_tilde, b_tilde, x_weights, y_weights)
+        
+        objective = cp.Minimize(cp.sum(cp.multiply(P, M_dist)))
+        
+        result = self.solver.solve(objective, constraints, max_iter)
+        
+        coupling = np.clip(P.value, 0, float('inf'))
+        cost = (coupling * M_dist).sum()
+        
+        return cost, coupling
+    
+    def get_constraints(self, P, u, v, a_tilde, b_tilde, x_weights, y_weights):
+                
+        constraints = [0 <= P, 
+                       cp.matmul(P, u) == a_tilde, 
+                       cp.matmul(P.T, v) == b_tilde, 
+                       0 <= a_tilde, 
+                       0 <= b_tilde]
+        
+        constraints.append(cp.sum([((x_weights[i] - a_tilde[i]) ** 2) / x_weights[i]
+                                   for i in range(x_weights.shape[0])]) <= self.rho)
+        constraints.append(cp.sum([((y_weights[i] - b_tilde[i]) ** 2) / y_weights[i]
+                                   for i in range(y_weights.shape[0])]) <= self.rho)
+        
+        return constraints
+    
+    
+class ModifiedRobustOTCost(RobustOTCost):
+    '''
+    ModifiedRobustOTCost - Modified version of RobustOTCost with added constraints for stability
+    
+    Inputs:
+        distance_function - subclass of DistanceFunction
+        rho - optimization constraint described in the paper
+        solver - cvxpy solving function
+        eps - solving tolerance
+        second_solve - if True, a second solve step will be attempted if the first fails to converge
+    '''
+    
+    def __init__(self, distance_function, rho, solver):
+        super().__init__(distance_function, rho, solver)
+        
+    def get_constraints(self, P, u, v, a_tilde, b_tilde, x_weights, y_weights):
+        constraints = [0 <= P,
+                       cp.sum(P) == 1.,
+                       cp.matmul(P, u) == a_tilde, 
+                       cp.matmul(P.T, v) == b_tilde, 
+                       0 <= a_tilde, 
+                       0 <= b_tilde]
+        
+        constraints.append(cp.sum([((x_weights[i] - a_tilde[i]) ** 2) / x_weights[i]
+                                   for i in range(x_weights.shape[0])]) <= self.rho)
+        constraints.append(cp.sum([((y_weights[i] - b_tilde[i]) ** 2) / y_weights[i]
+                                   for i in range(y_weights.shape[0])]) <= self.rho)
+        
+        return constraints
     
 
 def gaussian_distance_from_stats(mu_x, sigma_x, mu_y, sigma_y, eps=1e-6):
