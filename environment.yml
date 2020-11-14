@@ -1,0 +1,12 @@
+name: OTDD
+dependencies:
+- python>=3.6
+- numpy
+- matplotlib
+- pandas
+- scipy
+- pot
+- datashader
+- xarray
+- holoviews
+- cvxpy
