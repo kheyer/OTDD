@@ -86,7 +86,7 @@ def plot_class_distances(class_distances, row_classes, col_classes,
     if text:
         for i in range(class_distances.shape[0]):
             for j in range(class_distances.shape[1]):
-                text = ax.text(j, i, f'{class_distances[i, j]:.2f}',
+                text = ax.text(j, i, f'{class_distances[i, j]:.1f}',
                             ha="center", va="center", color="w")
             
     return ax

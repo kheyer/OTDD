@@ -6,6 +6,7 @@ from collections import Counter
 import matplotlib.pyplot as plt
 from scipy import linalg
 from multiprocessing import Pool
+import warnings
 
 # Data Classes
 
@@ -15,7 +16,7 @@ class ArrayDataset():
     
     Inputs:
         features - ndarray - data array of shape (n_samples x m_features)
-        labels - ndaarray, None - data array of shape (n_samples,) or None
+        labels - ndarray, None - data array of shape (n_samples,) or None
     '''
     def __init__(self, features, labels=None):
         self.features = features
@@ -90,7 +91,7 @@ class DistanceFunction():
         Returns:
             M_dist - ndarray - (n_samples x m_samples) distance matrix
         '''
-        pass
+        raise NotImplementedError
     
     def mask_diagonal(self, M_dist):
         '''
@@ -106,6 +107,14 @@ class DistanceFunction():
         fill_val = max(1e6, M_dist.max()*10)
         np.fill_diagonal(M_dist, fill_val)
         return M_dist
+
+    def gaussian_distance(self, x_vals, y_vals):
+
+        raise NotImplementedError
+
+    def gaussian_distance_from_stats(self, mu_x, sigma_x, mu_y, sigma_y, eps=1e-6):
+
+        raise NotImplementedError
     
 class POTDistance(DistanceFunction):
     '''
@@ -119,6 +128,13 @@ class POTDistance(DistanceFunction):
         super().__init__()
         
         self.distance_metric = distance_metric
+
+        if not self.distance_metric in ['euclidean', 'sqeuclidean']:
+            message = '''
+                        Gaussian approximation of the Wasserstein distance not supprted for your \
+distance function. Exercise caution in using Gaussian approximations.
+                      '''
+            warnings.warn(message, Warning)
         
     def __call__(self, x_vals, y_vals=None, mask_diagonal=False):
         M_dist = ot.dist(x_vals, y_vals, metric=self.distance_metric)
@@ -127,6 +143,23 @@ class POTDistance(DistanceFunction):
             M_dist = self.mask_diagonal(M_dist)
             
         return M_dist
+
+    def gaussian_distance(self, x_vals, y_vals):
+        cost = gaussian_distance(x_vals, y_vals)
+
+        if self.distance_metric == 'euclidean':
+            cost = cost**0.5
+        
+        return cost 
+
+    def gaussian_distance_from_stats(self, mu_x, sigma_x, mu_y, sigma_y, eps=1e-6):
+
+        cost = gaussian_distance_from_stats(mu_x, sigma_x, mu_y, sigma_y, eps=1e-6)
+
+        if self.distance_metric == 'euclidean':
+            cost = cost**0.5
+        
+        return cost 
 
 
 # Cost Functions
@@ -206,11 +239,6 @@ class CostFunction():
         
         return cost, coupling, M_dist
     
-    def gaussian_distance(self, x_vals, y_vals):
-        cost = gaussian_distance(x_vals, y_vals)
-        
-        return cost
-    
     def label_distances(self, x_vals, y_vals, x_labels, y_labels, max_iter=None, gaussian=False):
         '''
         calc_class_distances - calculates a class-based distance matrix
@@ -263,7 +291,7 @@ class CostFunction():
                 sample_y = y_vals[y_labels==c2]
                 
                 if gaussian:
-                    cost = gaussian_distance_from_stats(mu_xs[i], cov_xs[i], mu_ys[j], cov_ys[j])
+                    cost = self.distance_function.gaussian_distance_from_stats(mu_xs[i], cov_xs[i], mu_ys[j], cov_ys[j])
                 else:
                     cost, coupling, M_dist = self.distance(sample_x, sample_y, max_iter=max_iter)                
                 
@@ -338,7 +366,7 @@ class CostFunction():
                                      max_iter=None, gaussian=False):
         
         '''
-        bootstrap_OT_distance - estimates the value of OT_distance over the entire dataset using bootstrap sampling
+        bootstrap_distance - estimates the value of OT_distance over the entire dataset using bootstrap sampling
         
         Inputs:
             num_iterations - int - number of samples
@@ -368,7 +396,7 @@ class CostFunction():
                 sample_y = sample[sample_size_x:]
                 
             if gaussian:
-                cost = self.gaussian_distance(sample_x, sample_y)
+                cost = self.distance_function.gaussian_distance(sample_x, sample_y)
             else:
                 cost, coupling, M_dist = self.distance(sample_x, sample_y, max_iter=max_iter)
                 
@@ -464,8 +492,7 @@ class CostFunction():
         
         return x_vals, x_labels
 
-    
-    
+
 class EarthMoversCost(CostFunction):
     '''
     EarthMoversCost - measures transport cost via Earth Movers distance
@@ -749,7 +776,7 @@ def gaussian_distance_from_stats(mu_x, sigma_x, mu_y, sigma_y, eps=1e-6):
 
         tr_covmean = np.trace(covmean)
 
-        cost = (diff.dot(diff) + np.trace(sigma_x) + np.trace(sigma_y) - 2 * tr_covmean)**0.5
+        cost = diff.dot(diff) + np.trace(sigma_x) + np.trace(sigma_y) - 2 * tr_covmean
 
     return cost
 
