@@ -1,11 +1,15 @@
 from otdd import * 
 import torch
+import torch.nn.functional as F
 from torchvision import datasets, transforms
 import pandas as pd
 import numpy as np
+from functools import partial
 from geomloss.sinkhorn_samples import scaling_parameters, sinkhorn_loop, sinkhorn_cost
 from geomloss.sinkhorn_samples import softmin_tensorized, log_weights
 from geomloss.utils import Sqrt0, sqrt_0, squared_distances, distances
+from pykeops.torch import generic_logsumexp
+
 
 # from geomloss.kernel_samples import kernel_tensorized
 # from geomloss.kernel_samples import kernel_tensorized as hausdorff_tensorized
@@ -60,7 +64,7 @@ class TensorDataset():
             sample_idx = []
             for c in self.classes:
                 sample_idx += list(np.random.choice(idxs[self.labels==c],
-                                            min(n_samp, (self.labels==c).sum()), replace=False))
+                                            min(n_samp, (self.labels==c).sum().item()), replace=False))
         else:
             sample_idx = np.random.choice(idxs,
                                         min(total_size, self.features.shape[0]), replace=False)
@@ -151,6 +155,42 @@ class PytorchEuclideanSquaredDistance(PytorchDistanceFunction):
         
         return cost 
 
+class EuclideanOnline(PytorchEuclideanDistance):
+    def __init__(self):
+        super().__init__()
+        
+        self.formula = "Norm2(X-Y)"
+        
+    def __call__(self, x_vals, y_vals, mask_diagonal=False, class_values=None):
+        
+        if type(x_vals) == torch.Tensor:
+            x_vals = LazyTensor(x_vals[:,None,:])
+            y_vals = LazyTensor(y_vals[None,:,:])
+            
+#             dist = LazyTensor.norm2(x_vals - y_vals)
+            
+#         if class_values is not None:
+#             Z, L = class_values
+            
+#             dist = LazyTensor.norm2(x_vals - y_vals)
+        
+        return LazyTensor.norm2(x_vals - y_vals)
+    
+class EuclideanSquaredOnline(PytorchEuclideanSquaredDistance):
+    def __init__(self):
+        super().__init__()
+        
+        self.formula = "SqDist(X,Y)"
+        
+    def __call__(self, x_vals, y_vals, mask_diagonal=False):
+        
+        if type(x_vals) == torch.Tensor:
+            x_vals = LazyTensor(x_vals[:,None,:])
+            y_vals = LazyTensor(y_vals[None,:,:])
+        
+        return LazyTensor.sqdist(x_vals - y_vals)
+
+
 class KeopsRoutine():
     
     def routine(self, α, x, β, y, class_xy=None, class_yx=None, class_xx=None, class_yy=None, **kwargs):
@@ -171,7 +211,16 @@ class SinkhornTensorized(KeopsRoutine):
         self.diameter = diameter
         self.scaling = scaling
         self.eps = self.blur * self.p
-        
+
+    def calculate_cost(self, x, y, class_values):
+
+        C = self.cost(x, y)
+
+        if class_values is not None:
+            C = (C**2 + class_values**2)**0.5
+
+        return C
+            
     def routine(self, α, x, β, y, class_xy=None, class_yx=None, class_xx=None, class_yy=None, **kwargs):
         
         if x.ndim == 2:
@@ -184,23 +233,14 @@ class SinkhornTensorized(KeopsRoutine):
         _, M, _ = y.shape
         
         if self.debias:
-            C_xx, C_yy = ( self.cost( x, x.detach()), self.cost( y, y.detach()) )
-            
-            if class_xx is not None:
-                C_xx = (C_xx**2 + class_xx**2)**0.5
-                
-            if class_yy is not None:
-                C_yy = (C_yy**2 + class_yy**2)**0.5
+            C_xx = self.calculate_cost(x, x.detach(), class_xx)
+            C_yy = self.calculate_cost(y, y.detach(), class_yy)
 
+        else:
+            C_xx, C_yy = None, None
 
-        C_xy, C_yx = ( self.cost( x, y.detach()), self.cost( y, x.detach()) )  # (B,N,M), (B,M,N)
-        
-        if class_xy is not None:
-            C_xy = (C_xy**2 + class_xy**2)**0.5
-
-        if class_yx is not None:
-            C_yx = (C_yx**2 + class_yx**2)**0.5
-
+        C_xy = self.calculate_cost(x, y.detach(), class_xy) # (B, N, M)
+        C_yx = self.calculate_cost(y, x.detach(), class_yx) # (B, M, N)
 
         diameter, ε, ε_s, ρ = scaling_parameters( x, y, self.p, self.blur, 
                                                  self.reach, self.diameter, self.scaling )
@@ -218,6 +258,112 @@ class SinkhornTensorized(KeopsRoutine):
         coupling = ((F_i + G_j - C_xy) / self.eps).exp() * (a_i * b_i)
         
         return cost, coupling, C_xy
+
+class SinkhornOnline(KeopsRoutine):
+    def __init__(self, cost, debias=True,
+                         blur=0.05, reach=None, 
+                         diameter=None, scaling=0.5, factor_method='onehot'):
+        super().__init__()
+        
+        self.cost = cost
+        self.factor_method = factor_method
+        self.p = cost.p
+        self.debias = debias
+        self.blur = blur
+        self.reach = reach
+        self.diameter = diameter
+        self.scaling = scaling
+        self.eps = self.blur * self.p
+        
+    def logconv(self, C, dtype):
+        if len(C) == 2:
+            D = C[0].shape[1]
+            log_conv = generic_logsumexp("( B - (P * " + self.cost.formula + " ) )",
+                                     "A = Vi(1)",
+                                     "X = Vi({})".format(D),
+                                     "Y = Vj({})".format(D),
+                                     "B = Vj(1)",
+                                     "P = Pm(1)",
+                                     dtype = dtype)
+            
+        else:
+            D = C[0].shape[1]
+            C = C[2].shape[1]
+            
+            log_conv = generic_logsumexp("( B - (P * " + f"Sqrt(Pow({self.cost.formula},2) + Pow(Z|L, 2))" + " ) )",
+                                     "A = Vi(1)",
+                                     "X = Vi({})".format(D),
+                                     "Y = Vj({})".format(D),
+                                     "Z = Vi({})".format(C),
+                                     "L = Vj({})".format(C),
+                                     "B = Vj(1)",
+                                     "P = Pm(1)",
+                                     dtype = dtype)
+            
+        return log_conv
+        
+        
+    def softmin_online(self, ε, C_xy, f_y, log_conv=None):
+        
+        if len(C_xy) == 2:
+            x, y = C_xy
+            
+            return - ε * log_conv( x, y, f_y.view(-1,1), torch.Tensor([1/ε]).type_as(x) ).view(-1)
+        
+        else:
+            x, y, Z, L = C_xy
+            
+            return - ε * log_conv( x, y, Z, L, f_y.view(-1,1), torch.Tensor([1/ε]).type_as(x) ).view(-1)
+        
+    def calculate_cost(self, x, y, class_values):
+        if class_values is not None:
+            if self.factor_method == 'onehot':
+                C = (x, y, class_values[0], class_values[1])
+            else:
+                C = (torch.cat([x, class_values[0]], 1),
+                     torch.cat([y, class_values[1]], 1))
+        else:
+            C = (x, y)
+            
+        return C
+        
+        
+    def routine(self, α, x, β, y, class_xy=None, class_yx=None, class_xx=None, class_yy=None, **kwargs):
+        
+        N, D = x.shape
+        M, _ = y.shape
+        
+        if self.debias:
+            C_xx = self.calculate_cost(x, x.detach(), class_xx)
+            C_yy = self.calculate_cost(y, y.detach(), class_yy)
+            
+        else:
+            C_xx, C_yy = Non
+            
+        C_xy = self.calculate_cost(x, y.detach(), class_xy)
+        C_yx = self.calculate_cost(y, x.detach(), class_yx)
+        
+        softmin = partial(self.softmin_online, log_conv=self.logconv(C_xy, dtype=str(x.dtype)[6:])) 
+
+        diameter, ε, ε_s, ρ = scaling_parameters( x, y, self.p, self.blur, 
+                                                 self.reach, self.diameter, self.scaling )
+
+        a_x, b_y, a_y, b_x = sinkhorn_loop( softmin,
+                                            log_weights(α), log_weights(β), 
+                                            C_xx, C_yy, C_xy, C_yx, ε_s, ρ, debias=self.debias )
+
+        F,G = sinkhorn_cost(ε, ρ, α, β, a_x, b_y, a_y, b_x, debias=self.debias, potentials=True)
+        
+        a_i = α.view(-1,1)
+        b_i = β.view(1,-1)
+        F_i, G_j = F.view(-1,1), G.view(1,-1)
+        
+        cost = (F_i + G_j).mean()
+#         coupling = ((F_i + G_j - C_xy) / self.eps).exp() * (a_i * b_i)
+        coupling = (F_i, G_j, C_xy, self.eps, a_i, b_i)
+        
+        return cost, coupling, C_xy
+
 
 class SamplesLossTensorized(CostFunction):
 
@@ -240,7 +386,7 @@ class SamplesLossTensorized(CostFunction):
         
         cost, coupling, C_xy = self.keops_routine.routine(x_weights, x_vals, y_weights, y_vals)
         
-        return cost, coupling.squeeze(0), C_xy
+        return cost, coupling.squeeze(0), C_xy.squeeze(0)
         
     def cost_function(self, x_weights, y_weights, M_dists, scale_params):
         
@@ -292,7 +438,7 @@ class SamplesLossTensorized(CostFunction):
         
         class_distances, class_x_dict, class_y_dict = class_vals_xy
 
-        return cost, coupling, C_xy, class_distances, class_x_dict, class_y_dict
+        return cost, coupling.squeeze(0), C_xy.squeeze(0), class_distances, class_x_dict, class_y_dict
     
   
     def bootstrap_label_distance(self, num_iterations, dataset_x, sample_size_x, 
@@ -305,6 +451,11 @@ class SamplesLossTensorized(CostFunction):
         if dataset_y is None:
             dataset_y = dataset_x
             mask_diagonal=True
+
+        x_vals = dataset_x.features
+        x_labels = dataset_x.labels
+        y_vals = dataset_y.features
+        y_labels = dataset_y.labels
             
         class_vals_xy = self.label_distances(x_vals, y_vals, 
                                           x_labels, y_labels,
@@ -373,3 +524,172 @@ class SamplesLossTensorized(CostFunction):
             x_labels = x_labels[~bools]
         
         return x_vals, x_labels
+
+class SamplesLossOnline(SamplesLossTensorized):
+    def __init__(self, routine, factor_method='onehot', emb_size=5):
+        super().__init__(routine)
+        self.factor_method = factor_method
+        self.keops_routine.factor_method = self.factor_method
+        self.emb_size = emb_size
+        
+    def distance(self, x_vals, y_vals, mask_diagonal=False, max_iter=None):
+        
+        x_weights = self.get_sample_weights(x_vals.shape[0])
+        y_weights = self.get_sample_weights(y_vals.shape[0])
+        
+        x_weights = x_weights.type_as(x_vals)
+        y_weights = y_weights.type_as(y_vals)
+        
+        cost, coupling, C_xy = self.keops_routine.routine(x_weights, x_vals, y_weights, y_vals)
+        
+        return cost, coupling, C_xy
+    
+    def factor_matrix(self, class_distances, x_labels, y_labels):
+        if self.factor_method == 'onehot':
+            Z = class_distances[x_labels, :]
+            L = F.one_hot(y_labels).float()
+            output = [Z, L]
+            
+        else:
+            x, y = factor_matrix(class_distances, self.emb_size)
+            output = [x[x_labels], y[y_labels]]
+            
+        return output
+    
+    def distance_with_labels(self, x_vals, y_vals, x_labels, y_labels,
+                             gaussian_class_distance=False, 
+                             mask_diagonal=False):
+        
+        class_vals_xy = self.label_distances(x_vals, y_vals, 
+                                          x_labels, y_labels,
+                                          gaussian=gaussian_class_distance)
+        
+        class_vals_xx = self.label_distances(x_vals, x_vals, 
+                                          x_labels, x_labels,
+                                          gaussian=gaussian_class_distance)
+        
+        
+        class_vals_yy = self.label_distances(y_vals, y_vals, 
+                                          y_labels, y_labels,
+                                          gaussian=gaussian_class_distance)
+    
+        class_xx = self.factor_matrix(class_vals_xx[0], x_labels, x_labels)
+        class_yy = self.factor_matrix(class_vals_yy[0], y_labels, y_labels)
+        class_xy = self.factor_matrix(class_vals_xy[0], x_labels, y_labels)
+        class_yx = [class_xy[1].clone(), class_xy[0].clone()]
+        # class_yx = self.factor_matrix(class_vals_xy[0].T, y_labels, x_labels)
+
+        x_weights = self.get_sample_weights(x_vals.shape[0])
+        y_weights = self.get_sample_weights(y_vals.shape[0])
+
+        x_weights = x_weights.type_as(x_vals)
+        y_weights = y_weights.type_as(y_vals)
+        
+        cost, coupling, C_xy = self.keops_routine.routine(x_weights, x_vals, y_weights, y_vals,
+                                                        class_xy=class_xy, 
+                                                        class_yx=class_yx, 
+                                                        class_xx=class_xx,
+                                                        class_yy=class_yy)
+        
+        class_distances, class_x_dict, class_y_dict = class_vals_xy
+
+        return cost, coupling, C_xy, class_distances, class_x_dict, class_y_dict
+
+    def bootstrap_label_distance(self, num_iterations, dataset_x, sample_size_x, 
+                                           dataset_y=None, sample_size_y=None, 
+                                           min_labelcount=None, gaussian_class_distance=False):
+
+        distances = []
+        mask_diagonal=False
+
+        if dataset_y is None:
+            dataset_y = dataset_x
+            mask_diagonal=True
+
+        x_vals = dataset_x.features 
+        x_labels = dataset_x.labels 
+        y_vals = dataset_y.features 
+        y_labels = dataset_y.labels 
+            
+        class_vals_xy = self.label_distances(x_vals, y_vals, 
+                                          x_labels, y_labels,
+                                          gaussian=gaussian_class_distance)
+        
+        class_vals_xx = self.label_distances(x_vals, x_vals, 
+                                          x_labels, x_labels,
+                                          gaussian=gaussian_class_distance)
+        
+        
+        class_vals_yy = self.label_distances(y_vals, y_vals, 
+                                          y_labels, y_labels,
+                                          gaussian=gaussian_class_distance)
+            
+        
+        for i in range(num_iterations):
+            
+            if sample_size_y is not None:
+                sample_x, label_x = dataset_x.sample_with_label(sample_size_x)
+                sample_y, label_y = dataset_y.sample_with_label(sample_size_y)
+            else:
+                sample, label = dataset_x.sample_with_label(sample_size_x*2)
+                sample_x, label_x = sample[:sample_size_x], label[:sample_size_x]
+                sample_y, label_y = sample[sample_size_x:], label[sample_size_x:]
+        
+            sample_x, label_x = self.filter_labels(sample_x, label_x, min_labelcount)
+            sample_y, label_y = self.filter_labels(sample_y, label_y, min_labelcount)
+
+            x_weights = self.get_sample_weights(sample_x.shape[0])
+            y_weights = self.get_sample_weights(sample_y.shape[0])
+
+            x_weights = x_weights.type_as(sample_x)
+            y_weights = y_weights.type_as(sample_y)
+
+            class_xx = self.factor_matrix(class_vals_xx[0], label_x, label_x)
+            class_yy = self.factor_matrix(class_vals_yy[0], label_y, label_y)
+            class_xy = self.factor_matrix(class_vals_xy[0], label_x, label_y)
+            class_yx = [class_xy[1].clone(), class_xy[0].clone()]
+
+            cost, coupling, C_xy = self.keops_routine.routine(x_weights, sample_x, y_weights, sample_y,
+                                                            class_xy=class_xy, 
+                                                            class_yx=class_yx, 
+                                                            class_xx=class_xx,
+                                                            class_yy=class_yy)
+            
+            distances.append(cost)
+
+        return distances
+
+
+def factor_matrix(matrix, emb, lr=1e-1):
+    
+    x_shape, y_shape = matrix.shape
+    
+    x = torch.randn((x_shape,emb), requires_grad=True)
+    y = torch.randn((y_shape,emb), requires_grad=True)
+    
+    losses = []
+
+    for i in range(10000):
+        dists = (x[:,None,:] - y[None,:,:]).pow(2).sum(-1).pow(0.5)
+        loss = (matrix.detach() - dists).pow(2).mean()
+        losses.append(loss.item())
+        loss.backward()
+
+        x.data.add_(-lr, x.grad.data)
+        y.data.add_(-lr, y.grad.data)
+
+        x.grad.detach_()
+        x.grad.zero_()
+
+        y.grad.detach_()
+        y.grad.zero_()
+
+    if torch.isnan(x).any():
+        print('nans')
+        x, y = factor_matrix(matrix, emb, lr=lr/5)
+
+    else:
+        error = (dists - matrix).abs().mean().item()
+        print(f"Factored matrix with {error:.2f} MAE")
+    
+    return x.detach(), y.detach()
