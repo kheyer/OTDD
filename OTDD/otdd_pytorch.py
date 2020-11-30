@@ -292,12 +292,12 @@ class SinkhornTensorized(KeopsRoutine):
         F,G = sinkhorn_cost(ε, ρ, α, β, a_x, b_y, a_y, b_x, batch=True, debias=self.debias, potentials=True)
         
         a_i = α.view(-1,1)
-        b_i = β.view(1,-1)
+        b_j = β.view(1,-1)
         F_i, G_j = F.view(-1,1), G.view(1,-1)
         cost = (F_i + G_j).mean()
-        coupling = ((F_i + G_j - C_xy) / self.eps).exp() * (a_i * b_i)
+        coupling = ((F_i + G_j - C_xy) / self.eps).exp() * (a_i * b_j)
         
-        return cost, coupling, C_xy
+        return cost, coupling.squeeze(0), C_xy.squeeze(0), [F_i, G_j, a_i, b_j]
 
 class SinkhornOnline(KeopsRoutine):
     '''
@@ -408,7 +408,7 @@ class SinkhornOnline(KeopsRoutine):
         F,G = sinkhorn_cost(ε, ρ, α, β, a_x, b_y, a_y, b_x, debias=self.debias, potentials=True)
         
         a_i = α.view(-1,1)
-        b_i = β.view(1,-1)
+        b_j = β.view(1,-1)
         F_i, G_j = F.view(-1,1), G.view(1,-1)
         
         cost = (F_i + G_j).mean()
@@ -417,7 +417,7 @@ class SinkhornOnline(KeopsRoutine):
         F_i = LazyTensor(F_i.view(-1,1,1))
         G_j = LazyTensor(G_j.view(1,-1,1))
         a_i = LazyTensor(a_i.view(-1,1,1))
-        b_j = LazyTensor(b_i.view(1,-1,1))
+        b_j = LazyTensor(b_j.view(1,-1,1))
 
         if len(C_xy) == 2:
             x,y = C_xy 
@@ -428,7 +428,7 @@ class SinkhornOnline(KeopsRoutine):
 
         coupling = ((F_i + G_j - C_ij) / self.eps).exp() * (a_i * b_j)
         
-        return cost, coupling, C_ij
+        return cost, coupling, C_ij, [F_i, G_j, a_i, b_j]
 
 
 class SamplesLossTensorized(CostFunction):
@@ -448,7 +448,7 @@ class SamplesLossTensorized(CostFunction):
         x_weights = torch.tensor([1/num_samples for i in range(num_samples)])
         return x_weights
     
-    def distance(self, x_vals, y_vals, mask_diagonal=False, max_iter=None):
+    def distance(self, x_vals, y_vals, mask_diagonal=False, max_iter=None, return_transport=False):
         
         x_weights = self.get_sample_weights(x_vals.shape[0])
         y_weights = self.get_sample_weights(y_vals.shape[0])
@@ -456,9 +456,12 @@ class SamplesLossTensorized(CostFunction):
         x_weights = x_weights.type_as(x_vals)
         y_weights = y_weights.type_as(y_vals)
         
-        cost, coupling, C_xy = self.keops_routine.routine(x_weights, x_vals, y_weights, y_vals)
-        
-        return cost, coupling.squeeze(0), C_xy.squeeze(0)
+        cost, coupling, C_xy, transport = self.keops_routine.routine(x_weights, x_vals, y_weights, y_vals)
+
+        if return_transport:
+            return cost, coupling, C_xy, transport
+        else:
+            return cost, coupling, C_xy
         
     def cost_function(self, x_weights, y_weights, M_dists, scale_params):
         
@@ -505,12 +508,12 @@ class SamplesLossTensorized(CostFunction):
         x_weights = x_weights.type_as(x_vals)
         y_weights = y_weights.type_as(y_vals)
         
-        cost, coupling, C_xy = self.keops_routine.routine(x_weights, x_vals, y_weights, y_vals,
+        cost, coupling, C_xy, transport = self.keops_routine.routine(x_weights, x_vals, y_weights, y_vals,
                                          class_xy=d_xy, class_yx=d_yx, class_xx=d_xx, class_yy=d_yy)
         
         class_distances, class_x_dict, class_y_dict = class_vals_xy
 
-        return cost, coupling.squeeze(0), C_xy.squeeze(0), class_distances, class_x_dict, class_y_dict
+        return cost, coupling, C_xy, class_distances, class_x_dict, class_y_dict, transport
     
   
     def bootstrap_label_distance(self, num_iterations, dataset_x, sample_size_x, 
@@ -570,7 +573,7 @@ class SamplesLossTensorized(CostFunction):
 
             d_yy = torch.tensor(get_class_matrix(label_y, label_y, *class_vals_yy)).type_as(x_vals)
 
-            cost, coupling, C_xy = self.keops_routine.routine(x_weights, sample_x, y_weights, sample_y,
+            cost, coupling, C_xy, transport = self.keops_routine.routine(x_weights, sample_x, y_weights, sample_y,
                                          class_xy=d_xy, class_yx=d_yx, class_xx=d_xx, class_yy=d_yy)
             
             distances.append(cost)
@@ -616,17 +619,20 @@ class SamplesLossOnline(SamplesLossTensorized):
         self.keops_routine.factor_method = self.factor_method
         self.emb_size = emb_size
         
-    def distance(self, x_vals, y_vals, mask_diagonal=False, max_iter=None):
+    # def distance(self, x_vals, y_vals, mask_diagonal=False, max_iter=None, return_transport=False):
         
-        x_weights = self.get_sample_weights(x_vals.shape[0])
-        y_weights = self.get_sample_weights(y_vals.shape[0])
+    #     x_weights = self.get_sample_weights(x_vals.shape[0])
+    #     y_weights = self.get_sample_weights(y_vals.shape[0])
         
-        x_weights = x_weights.type_as(x_vals)
-        y_weights = y_weights.type_as(y_vals)
+    #     x_weights = x_weights.type_as(x_vals)
+    #     y_weights = y_weights.type_as(y_vals)
         
-        cost, coupling, C_xy = self.keops_routine.routine(x_weights, x_vals, y_weights, y_vals)
-        
-        return cost, coupling, C_xy
+    #     cost, coupling, C_xy, transport = self.keops_routine.routine(x_weights, x_vals, y_weights, y_vals)
+
+    #     if return_transport:
+    #         return cost, coupling, C_xy, transport
+    #     else:
+    #         return cost, coupling, C_xy
     
     def factor_matrix(self, class_distances, x_labels, y_labels):
         if self.factor_method == 'onehot':
@@ -669,7 +675,7 @@ class SamplesLossOnline(SamplesLossTensorized):
         x_weights = x_weights.type_as(x_vals)
         y_weights = y_weights.type_as(y_vals)
         
-        cost, coupling, C_xy = self.keops_routine.routine(x_weights, x_vals, y_weights, y_vals,
+        cost, coupling, C_xy, transport = self.keops_routine.routine(x_weights, x_vals, y_weights, y_vals,
                                                         class_xy=class_xy, 
                                                         class_yx=class_yx, 
                                                         class_xx=class_xx,
@@ -677,7 +683,7 @@ class SamplesLossOnline(SamplesLossTensorized):
         
         class_distances, class_x_dict, class_y_dict = class_vals_xy
 
-        return cost, coupling, C_xy, class_distances, class_x_dict, class_y_dict
+        return cost, coupling, C_xy, class_distances, class_x_dict, class_y_dict, transport
 
     def bootstrap_label_distance(self, num_iterations, dataset_x, sample_size_x, 
                                            dataset_y=None, sample_size_y=None, 
@@ -733,7 +739,7 @@ class SamplesLossOnline(SamplesLossTensorized):
             class_xy = self.factor_matrix(class_vals_xy[0], label_x, label_y)
             class_yx = [class_xy[1].clone(), class_xy[0].clone()]
 
-            cost, coupling, C_xy = self.keops_routine.routine(x_weights, sample_x, y_weights, sample_y,
+            cost, coupling, C_xy, transport = self.keops_routine.routine(x_weights, sample_x, y_weights, sample_y,
                                                             class_xy=class_xy, 
                                                             class_yx=class_yx, 
                                                             class_xx=class_xx,
