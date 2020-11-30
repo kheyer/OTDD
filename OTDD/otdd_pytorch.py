@@ -8,7 +8,7 @@ from functools import partial
 from geomloss.sinkhorn_samples import scaling_parameters, sinkhorn_loop, sinkhorn_cost
 from geomloss.sinkhorn_samples import softmin_tensorized, log_weights
 from geomloss.utils import Sqrt0, sqrt_0, squared_distances, distances
-from pykeops.torch import generic_logsumexp
+from pykeops.torch import generic_logsumexp, LazyTensor
 
 
 # from geomloss.kernel_samples import kernel_tensorized
@@ -156,6 +156,9 @@ class PytorchEuclideanSquaredDistance(PytorchDistanceFunction):
         return cost 
 
 class EuclideanOnline(PytorchEuclideanDistance):
+    '''
+    EuclideanOnline - computes online euclidean distance
+    '''
     def __init__(self):
         super().__init__()
         
@@ -166,41 +169,78 @@ class EuclideanOnline(PytorchEuclideanDistance):
         if type(x_vals) == torch.Tensor:
             x_vals = LazyTensor(x_vals[:,None,:])
             y_vals = LazyTensor(y_vals[None,:,:])
+
+        dist = LazyTensor.norm2(x_vals - y_vals)
+
+        if class_values is not None:
+            Z, L = class_values
             
-#             dist = LazyTensor.norm2(x_vals - y_vals)
-            
-#         if class_values is not None:
-#             Z, L = class_values
-            
-#             dist = LazyTensor.norm2(x_vals - y_vals)
+            if type(Z) == torch.Tensor:
+                Z = LazyTensor(Z[:,None,:])
+                L = LazyTensor(L[None,:,:])
+
+            class_dist = LazyTensor.power(Z | L, 2)
+
+            dist = LazyTensor.sqrt(LazyTensor.power(dist, 2) + class_dist)
         
-        return LazyTensor.norm2(x_vals - y_vals)
+        return dist
     
 class EuclideanSquaredOnline(PytorchEuclideanSquaredDistance):
+    '''
+    EuclideanSquaredOnline - computes online squared euclidean distance
+    '''
     def __init__(self):
         super().__init__()
         
         self.formula = "SqDist(X,Y)"
         
-    def __call__(self, x_vals, y_vals, mask_diagonal=False):
+    def __call__(self, x_vals, y_vals, mask_diagonal=False, class_values=None):
         
         if type(x_vals) == torch.Tensor:
             x_vals = LazyTensor(x_vals[:,None,:])
             y_vals = LazyTensor(y_vals[None,:,:])
         
-        return LazyTensor.sqdist(x_vals - y_vals)
+        dist = LazyTensor.norm2(x_vals - y_vals)
+
+        if class_values is not None:
+            Z, L = class_values
+            
+            if type(Z) == torch.Tensor:
+                Z = LazyTensor(Z[:,None,:])
+                L = LazyTensor(L[None,:,:])
+
+            class_dist = LazyTensor.power(Z | L, 2)
+
+            dist = LazyTensor.sqrt(LazyTensor.power(dist, 2) + class_dist)
+        
+        return dist
 
 
 class KeopsRoutine():
+    '''
+    KeopsRoutine - Base class for implementing keops routines from Geomloss. Designed to work
+        with the Geomloss API
+    '''
     
     def routine(self, α, x, β, y, class_xy=None, class_yx=None, class_xx=None, class_yy=None, **kwargs):
         
         raise NotImplementedError
 
 class SinkhornTensorized(KeopsRoutine):
+    '''
+    SinkhornTensorized - Computes tensorized Sinkhorn cost using Keops.
+        Best for computing distances with less than 5000 samples
+
+    Inputs:
+        cost - Cost function, should be a subclass of PytorchDistanceFunction that returns a dense tensor
+        debias - Bool, if True, compute the unbiased Sinkhorn divergence. If False, computee the entropy-regularized “SoftAssign” loss variant
+        blur - float, finest level of detail in computing the loss. Prevents overfitting to sample location
+        reach - None, float. If float, specifies a maximum scale of interaction between inputs (introduces laziness into the classical Monge problem)
+        scaling - float, controlls the trade-off between speed (scaling < .4) and accuracy (scaling > .9)
+    '''
     def __init__(self, cost, debias=True,
                          blur=0.05, reach=None, 
-                         diameter=None, scaling=0.5):
+                         scaling=0.5):
         super().__init__()
         
         self.cost = cost
@@ -208,7 +248,7 @@ class SinkhornTensorized(KeopsRoutine):
         self.debias = debias
         self.blur = blur
         self.reach = reach
-        self.diameter = diameter
+        self.diameter = None
         self.scaling = scaling
         self.eps = self.blur * self.p
 
@@ -260,9 +300,22 @@ class SinkhornTensorized(KeopsRoutine):
         return cost, coupling, C_xy
 
 class SinkhornOnline(KeopsRoutine):
+    '''
+    SinkhornOnline - Computes online Sinkhorn cost using Keops.
+        Best for computing distances with more than 5000 samples
+
+    Inputs:
+        cost - Cost function, should be a subclass of PytorchDistanceFunction that returns a KeOps LazyTensor
+        debias - Bool, if True, compute the unbiased Sinkhorn divergence. If False, computee the entropy-regularized “SoftAssign” loss variant
+        blur - float, finest level of detail in computing the loss. Prevents overfitting to sample location
+        reach - None, float. If float, specifies a maximum scale of interaction between inputs (introduces laziness into the classical Monge problem)
+        scaling - float, controlls the trade-off between speed (scaling < .4) and accuracy (scaling > .9)
+        factor_method - str, ['onehot', 'factor']. Specifies how class distances are encoded into KeOps vectors. See SamplesLossOnline
+                        docuentation for full details
+    '''
     def __init__(self, cost, debias=True,
                          blur=0.05, reach=None, 
-                         diameter=None, scaling=0.5, factor_method='onehot'):
+                         scaling=0.5, factor_method='onehot'):
         super().__init__()
         
         self.cost = cost
@@ -271,7 +324,7 @@ class SinkhornOnline(KeopsRoutine):
         self.debias = debias
         self.blur = blur
         self.reach = reach
-        self.diameter = diameter
+        self.diameter = None
         self.scaling = scaling
         self.eps = self.blur * self.p
         
@@ -359,13 +412,32 @@ class SinkhornOnline(KeopsRoutine):
         F_i, G_j = F.view(-1,1), G.view(1,-1)
         
         cost = (F_i + G_j).mean()
-#         coupling = ((F_i + G_j - C_xy) / self.eps).exp() * (a_i * b_i)
-        coupling = (F_i, G_j, C_xy, self.eps, a_i, b_i)
+
+        # coupling calculation 
+        F_i = LazyTensor(F_i.view(-1,1,1))
+        G_j = LazyTensor(G_j.view(1,-1,1))
+        a_i = LazyTensor(a_i.view(-1,1,1))
+        b_j = LazyTensor(b_i.view(1,-1,1))
+
+        if len(C_xy) == 2:
+            x,y = C_xy 
+            C_ij = self.cost(x,y)
+        else:
+            x,y,Z,L = C_xy 
+            C_ij = self.cost(x,y, class_values=[Z,L])
+
+        coupling = ((F_i + G_j - C_ij) / self.eps).exp() * (a_i * b_j)
         
-        return cost, coupling, C_xy
+        return cost, coupling, C_ij
 
 
 class SamplesLossTensorized(CostFunction):
+    '''
+    SamplesLossTensorized - cost function for tensorized keops routines
+        
+    Inputs:
+        keops_routine - subclass of KeopsRoutine with a tensorized implementation
+    '''
 
     def __init__(self, keops_routine):
         super().__init__(keops_routine.cost, 1000)
@@ -526,6 +598,18 @@ class SamplesLossTensorized(CostFunction):
         return x_vals, x_labels
 
 class SamplesLossOnline(SamplesLossTensorized):
+    '''
+    SamplesLossOnline - cost function for online keops routines
+        
+    Inputs:
+        keops_routine - subclass of KeopsRoutine with a online implementation
+        factor_method - str, ['onehot', 'factor']. With online routines, the standard (M,N) matrix of class distances
+                            must be encoded on the feature vectors. If 'onehot', class distances are encoded as a matrix
+                            of class distances multiplied by a matrix of class one hot encodings. Best when there are fewer classes.
+                            If 'factor', class distances are factored into a set of vectors of length `emb_size` and concatenated
+                            to feature vectors
+        emb_size - int, if factor_method is 'factor', determines the embedding size for class distances
+    '''
     def __init__(self, routine, factor_method='onehot', emb_size=5):
         super().__init__(routine)
         self.factor_method = factor_method
@@ -661,6 +745,14 @@ class SamplesLossOnline(SamplesLossTensorized):
 
 
 def factor_matrix(matrix, emb, lr=1e-1):
+    '''
+    factor_matrix - factors a (M,N) matrix into vectors of size (M,emb) and (N,emb)
+
+    Inputs:
+        matrix - torch.FloatTensor, matrix to be factored
+        emb - int, embedding size
+        lr - float, learning rate
+    '''
     
     x_shape, y_shape = matrix.shape
     
