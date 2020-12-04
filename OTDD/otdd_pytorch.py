@@ -618,21 +618,6 @@ class SamplesLossOnline(SamplesLossTensorized):
         self.factor_method = factor_method
         self.keops_routine.factor_method = self.factor_method
         self.emb_size = emb_size
-        
-    # def distance(self, x_vals, y_vals, mask_diagonal=False, max_iter=None, return_transport=False):
-        
-    #     x_weights = self.get_sample_weights(x_vals.shape[0])
-    #     y_weights = self.get_sample_weights(y_vals.shape[0])
-        
-    #     x_weights = x_weights.type_as(x_vals)
-    #     y_weights = y_weights.type_as(y_vals)
-        
-    #     cost, coupling, C_xy, transport = self.keops_routine.routine(x_weights, x_vals, y_weights, y_vals)
-
-    #     if return_transport:
-    #         return cost, coupling, C_xy, transport
-    #     else:
-    #         return cost, coupling, C_xy
     
     def factor_matrix(self, class_distances, x_labels, y_labels):
         if self.factor_method == 'onehot':
