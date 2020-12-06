@@ -10,10 +10,6 @@ from geomloss.sinkhorn_samples import softmin_tensorized, log_weights
 from geomloss.utils import Sqrt0, sqrt_0, squared_distances, distances
 from pykeops.torch import generic_logsumexp, LazyTensor
 
-
-# from geomloss.kernel_samples import kernel_tensorized
-# from geomloss.kernel_samples import kernel_tensorized as hausdorff_tensorized
-
 class TensorDataset():
     '''
     TensorDataset - base class for tensor data
@@ -21,14 +17,20 @@ class TensorDataset():
     Inputs:
         features - tensor - data tensor of shape (n_samples x m_features)
         labels - tensor, None - data tensor of shape (n_samples,) or None
+        classes - ndarray, None - list that maps integers in `labels` to class names
     '''
-    def __init__(self, features, labels=None):
-        self.features = features
+    def __init__(self, features, labels=None, classes=None):
+        self.features = features.float()
 
         if labels is None:
             labels = torch.tensor([0 for i in range(features.shape[0])])
-        self.labels = labels
-        self.classes = sorted(list(set(self.labels.numpy())))
+            
+        self.labels = labels.long()
+
+        if classes is None:
+            classes = sorted(list(set(self.labels.numpy())))
+
+        self.classes = classes
         
     def __len__(self):
         return self.features.shape[0]
@@ -87,7 +89,7 @@ class PytorchDistanceFunction(DistanceFunction):
         
     def mask_diagonal(self, M_dist):
         fill_val = max(1e6, M_dist.max()*10)
-        mask = torch.eye(M_dist.shape).byte()
+        mask = torch.eye(M_dist.squeeze(0).shape[0]).bool()
         M_dist.masked_fill_(mask, fill_val)
         return M_dist
     
@@ -98,6 +100,7 @@ class PytorchEuclideanDistance(PytorchDistanceFunction):
     def __init__(self):
         super().__init__()
         self.p = 1.
+        self.backend = 'tensorized'
         
     def __call__(self, x_vals, y_vals=None, mask_diagonal=False):
         
@@ -130,6 +133,7 @@ class PytorchEuclideanSquaredDistance(PytorchDistanceFunction):
     def __init__(self):
         super().__init__()
         self.p = 2.
+        self.backend = 'tensorized'
         
     def __call__(self, x_vals, y_vals=None, mask_diagonal=False):
         
@@ -163,6 +167,7 @@ class EuclideanOnline(PytorchEuclideanDistance):
         super().__init__()
         
         self.formula = "Norm2(X-Y)"
+        self.backend = 'online'
         
     def __call__(self, x_vals, y_vals, mask_diagonal=False, class_values=None):
         
@@ -193,6 +198,7 @@ class EuclideanSquaredOnline(PytorchEuclideanSquaredDistance):
         super().__init__()
         
         self.formula = "SqDist(X,Y)"
+        self.backend = 'online'
         
     def __call__(self, x_vals, y_vals, mask_diagonal=False, class_values=None):
         
@@ -222,7 +228,7 @@ class KeopsRoutine():
         with the Geomloss API
     '''
     
-    def routine(self, α, x, β, y, class_xy=None, class_yx=None, class_xx=None, class_yy=None, **kwargs):
+    def routine(self, α, x, β, y, class_xy=None, class_yx=None, class_xx=None, class_yy=None, mask_diagonal=False, **kwargs):
         
         raise NotImplementedError
 
@@ -252,16 +258,18 @@ class SinkhornTensorized(KeopsRoutine):
         self.scaling = scaling
         self.eps = self.blur * self.p
 
-    def calculate_cost(self, x, y, class_values):
+        assert self.cost.backend == 'tensorized', "use a distance function with a tensorized backend"
 
-        C = self.cost(x, y)
+    def calculate_cost(self, x, y, class_values, mask_diagonal=False):
+
+        C = self.cost(x, y, mask_diagonal=mask_diagonal)
 
         if class_values is not None:
             C = (C**2 + class_values**2)**0.5
 
         return C
             
-    def routine(self, α, x, β, y, class_xy=None, class_yx=None, class_xx=None, class_yy=None, **kwargs):
+    def routine(self, α, x, β, y, class_xy=None, class_yx=None, class_xx=None, class_yy=None, mask_diagonal=False, **kwargs):
         
         if x.ndim == 2:
             x = x.unsqueeze(0)
@@ -273,14 +281,14 @@ class SinkhornTensorized(KeopsRoutine):
         _, M, _ = y.shape
         
         if self.debias:
-            C_xx = self.calculate_cost(x, x.detach(), class_xx)
-            C_yy = self.calculate_cost(y, y.detach(), class_yy)
+            C_xx = self.calculate_cost(x, x.detach(), class_xx, mask_diagonal=mask_diagonal)
+            C_yy = self.calculate_cost(y, y.detach(), class_yy, mask_diagonal=mask_diagonal)
 
         else:
             C_xx, C_yy = None, None
 
-        C_xy = self.calculate_cost(x, y.detach(), class_xy) # (B, N, M)
-        C_yx = self.calculate_cost(y, x.detach(), class_yx) # (B, M, N)
+        C_xy = self.calculate_cost(x, y.detach(), class_xy, mask_diagonal=mask_diagonal) # (B, N, M)
+        C_yx = self.calculate_cost(y, x.detach(), class_yx, mask_diagonal=mask_diagonal) # (B, M, N)
 
         diameter, ε, ε_s, ρ = scaling_parameters( x, y, self.p, self.blur, 
                                                  self.reach, self.diameter, self.scaling )
@@ -327,6 +335,8 @@ class SinkhornOnline(KeopsRoutine):
         self.diameter = None
         self.scaling = scaling
         self.eps = self.blur * self.p
+
+        assert self.cost.backend == 'online', "use a distance function with an online backend"
         
     def logconv(self, C, dtype):
         if len(C) == 2:
@@ -381,7 +391,7 @@ class SinkhornOnline(KeopsRoutine):
         return C
         
         
-    def routine(self, α, x, β, y, class_xy=None, class_yx=None, class_xx=None, class_yy=None, **kwargs):
+    def routine(self, α, x, β, y, class_xy=None, class_yx=None, class_xx=None, class_yy=None, mask_diagonal=False, **kwargs):
         
         N, D = x.shape
         M, _ = y.shape
@@ -430,7 +440,6 @@ class SinkhornOnline(KeopsRoutine):
         
         return cost, coupling, C_ij, [F_i, G_j, a_i, b_j]
 
-
 class SamplesLossTensorized(CostFunction):
     '''
     SamplesLossTensorized - cost function for tensorized keops routines
@@ -456,7 +465,9 @@ class SamplesLossTensorized(CostFunction):
         x_weights = x_weights.type_as(x_vals)
         y_weights = y_weights.type_as(y_vals)
         
-        cost, coupling, C_xy, transport = self.keops_routine.routine(x_weights, x_vals, y_weights, y_vals)
+        cost, coupling, C_xy, transport = self.keops_routine.routine(x_weights, x_vals, 
+                                                                    y_weights, y_vals,
+                                                                    mask_diagonal=mask_diagonal)
 
         if return_transport:
             return cost, coupling, C_xy, transport
@@ -508,8 +519,11 @@ class SamplesLossTensorized(CostFunction):
         x_weights = x_weights.type_as(x_vals)
         y_weights = y_weights.type_as(y_vals)
         
-        cost, coupling, C_xy, transport = self.keops_routine.routine(x_weights, x_vals, y_weights, y_vals,
-                                         class_xy=d_xy, class_yx=d_yx, class_xx=d_xx, class_yy=d_yy)
+        cost, coupling, C_xy, transport = self.keops_routine.routine(x_weights, x_vals, 
+                                                                    y_weights, y_vals,
+                                                                    class_xy=d_xy, class_yx=d_yx, 
+                                                                    class_xx=d_xx, class_yy=d_yy,
+                                                                    mask_diagonal=mask_diagonal)
         
         class_distances, class_x_dict, class_y_dict = class_vals_xy
 
@@ -573,8 +587,10 @@ class SamplesLossTensorized(CostFunction):
 
             d_yy = torch.tensor(get_class_matrix(label_y, label_y, *class_vals_yy)).type_as(x_vals)
 
-            cost, coupling, C_xy, transport = self.keops_routine.routine(x_weights, sample_x, y_weights, sample_y,
-                                         class_xy=d_xy, class_yx=d_yx, class_xx=d_xx, class_yy=d_yy)
+            cost, coupling, C_xy, transport = self.keops_routine.routine(x_weights, sample_x, 
+                                                                        y_weights, sample_y,
+                                                                        class_xy=d_xy, class_yx=d_yx, 
+                                                                        class_xx=d_xx, class_yy=d_yy)
             
             distances.append(cost)
 
@@ -664,7 +680,8 @@ class SamplesLossOnline(SamplesLossTensorized):
                                                         class_xy=class_xy, 
                                                         class_yx=class_yx, 
                                                         class_xx=class_xx,
-                                                        class_yy=class_yy)
+                                                        class_yy=class_yy,
+                                                        mask_diagonal=mask_diagonal)
         
         class_distances, class_x_dict, class_y_dict = class_vals_xy
 

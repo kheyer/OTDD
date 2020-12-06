@@ -32,7 +32,7 @@ class SmilesDataset(ArrayDataset):
         else:
             fps = [self.get_fingerprint(i) for i in smiles]
             
-        fps = np.array(fps)
+        fps = np.array(fps, dtype=np.int8)
         
         return fps
     

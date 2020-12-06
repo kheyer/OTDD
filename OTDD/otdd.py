@@ -16,15 +16,20 @@ class ArrayDataset():
     
     Inputs:
         features - ndarray - data array of shape (n_samples x m_features)
-        labels - ndarray, None - data array of shape (n_samples,) or None
+        labels - ndarray, None - data class label array of shape (n_samples,) or None
+        classes - ndarray, None - list that maps integers in `labels` to class names
     '''
-    def __init__(self, features, labels=None):
+    def __init__(self, features, labels=None, classes=None):
         self.features = features
 
         if labels is None:
             labels = np.array([0 for i in range(features.shape[0])])
         self.labels = labels
-        self.classes = sorted(list(set(self.labels)))
+
+        if classes is None:
+            classes = sorted(list(set(self.labels)))
+
+        self.classes = classes
         
     def __len__(self):
         return self.features.shape[0]
@@ -354,16 +359,6 @@ class CostFunction():
 
             dz = get_class_matrix(x_labels, y_labels, class_distances, class_x_dict, class_y_dict)
 
-            # # TODO: vectorize this
-            # print('indexing')
-            # for i in range(M_dist.shape[0]):
-            #     for j in range(M_dist.shape[1]):
-            #         c1 = class_x_dict[x_labels[i]]
-            #         c2 = class_y_dict[y_labels[j]]
-
-            #         w_dist = class_distances[c1, c2]
-            #         dz[i,j] = w_dist
-
             OTDD_matrix = (M_dist**2 + dz**2)**0.5
         
         else:
@@ -467,17 +462,6 @@ class CostFunction():
             M_dist = self.distance_function(sample_x, sample_y, mask_diagonal)
 
             dz = get_class_matrix(label_x, label_y, class_distances, class_x_dict, class_y_dict)
-
-            # dz = np.zeros(M_dist.shape)
-
-            # # TODO: vectorize this
-            # for i in range(M_dist.shape[0]):
-            #     for j in range(M_dist.shape[1]):
-            #         c1 = class_x_dict[label_x[i]]
-            #         c2 = class_y_dict[label_y[j]]
-
-            #         w_dist = class_distances[c1, c2]
-            #         dz[i,j] = w_dist
 
             OTDD_matrix = (M_dist**2 + dz**2)**0.5
 
@@ -825,4 +809,13 @@ def gaussian_distance(x_vals, y_vals):
     sigma_y = np.atleast_2d(np.cov(y_vals.T))
 
     return gaussian_distance_from_stats(mu_x, sigma_x, mu_y, sigma_y)
+
+def labels_to_ints(labels):
+    classes = list(set(labels))
+    class_to_id = {classes[i]:i for i in range(len(classes))}
+    id_to_class = {i:classes[i] for i in range(len(classes))}
+
+    label_ids = np.array([class_to_id[i] for i in labels])
+
+    return label_ids, [class_to_id, id_to_class]
     
