@@ -2,6 +2,14 @@
 
 This repo is a python implementation of [Geometric Dataset Distances via Optimal Transport](https://arxiv.org/pdf/2002.02923.pdf) and [Robust Optimal Transport](https://arxiv.org/pdf/2010.05862.pdf). Routines are implemented in numpy with [Python Optimal Transport](https://pythonot.github.io/) and [CVXPY](https://www.cvxpy.org/), as well as in Pytorch using [KeOps](https://github.com/getkeops/keops) and [GeomLoss](https://www.kernel-operations.io/geomloss/index.html).
 
+The OTDD algorithm allows us to incorporate label information into the optimal transport problem.
+
+![coupling comparison](https://github.com/kheyer/OTDD/blob/main/media/coupling_comparison.png)
+
+[Algorithm Overview](https://github.com/kheyer/OTDD/tree/main/Algorithms)
+[API](https://github.com/kheyer/OTDD/tree/main/API)
+[Examples](https://github.com/kheyer/OTDD/tree/main/Examples)
+
 ## Installing
 
 Core dependencies can be installed from the `environment.yml` file
