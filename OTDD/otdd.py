@@ -24,6 +24,11 @@ class ArrayDataset():
 
         if labels is None:
             labels = np.array([0 for i in range(features.shape[0])])
+
+        if type(labels[0]) == str:
+            labels, class_data = labels_to_ints(labels)
+            classes = list(class_data[1].values())
+
         self.labels = labels
 
         if classes is None:
@@ -59,11 +64,12 @@ class ArrayDataset():
     def subsample(self, total_size, equal_classes=True):
 
         idxs = np.arange(self.features.shape[0])
+        classes = list(set(self.labels))
 
         if equal_classes:
-            n_samp = total_size//len(self.classes)
+            n_samp = total_size//len(classes)
             sample_idx = []
-            for c in self.classes:
+            for c in classes:
                 sample_idx += list(np.random.choice(idxs[self.labels==c],
                                             min(n_samp, (self.labels==c).sum()), replace=False))
         else:
@@ -73,7 +79,7 @@ class ArrayDataset():
         sample_vecs = self.features[sample_idx]
         sample_labels = self.labels[sample_idx]
 
-        return ArrayDataset(sample_vecs, sample_labels)
+        return ArrayDataset(sample_vecs, sample_labels, self.classes)
 
 # Distance classes
     
@@ -166,18 +172,30 @@ distance function. Exercise caution in using Gaussian approximations.
         
         return cost 
 
-def get_class_matrix(x_labels, y_labels, class_distances, class_x_dict, class_y_dict):
+# def get_class_matrix(x_labels, y_labels, class_distances, class_x_dict, class_y_dict):
     
-    dz = np.zeros((x_labels.shape[0], y_labels.shape[0]))
+#     dz = np.zeros((x_labels.shape[0], y_labels.shape[0]))
         
-    for i in range(dz.shape[0]):
-        for j in range(dz.shape[1]):
-            c1 = class_x_dict[x_labels[i].item()]
-            c2 = class_y_dict[y_labels[j].item()]
+#     for i in range(dz.shape[0]):
+#         for j in range(dz.shape[1]):
+#             c1 = class_x_dict[x_labels[i].item()]
+#             c2 = class_y_dict[y_labels[j].item()]
 
-            w_dist = class_distances[c1, c2]
-            dz[i,j] = w_dist
+#             w_dist = class_distances[c1, c2]
+#             dz[i,j] = w_dist
 
+#     return dz
+
+def get_class_matrix(x_labels, y_labels, class_distances, class_x_dict=None, class_y_dict=None):
+    
+    if (class_x_dict is not None) and (not x_labels[0].item() == class_x_dict[x_labels[0].item()]):
+        x_labels = np.array([class_x_dict[i.item()] for i in x_labels])
+        
+    if (class_y_dict is not None) and (not y_labels[0].item() == class_y_dict[y_labels[0].item()]):
+        y_labels = np.array([class_y_dict[i.item()] for i in y_labels])
+        
+    dz = class_distances[x_labels][:, y_labels]
+    
     return dz
 
 

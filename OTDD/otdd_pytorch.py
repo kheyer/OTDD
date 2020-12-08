@@ -60,11 +60,12 @@ class TensorDataset():
     def subsample(self, total_size, equal_classes=True):
 
         idxs = torch.arange(self.features.shape[0])
+        classes = list(set(self.labels.numpy()))
 
         if equal_classes:
-            n_samp = total_size//len(self.classes)
+            n_samp = total_size//len(classes)
             sample_idx = []
-            for c in self.classes:
+            for c in classes:
                 sample_idx += list(np.random.choice(idxs[self.labels==c],
                                             min(n_samp, (self.labels==c).sum().item()), replace=False))
         else:
@@ -74,7 +75,7 @@ class TensorDataset():
         sample_vecs = self.features[sample_idx]
         sample_labels = self.labels[sample_idx]
 
-        return TensorDataset(sample_vecs, sample_labels)
+        return TensorDataset(sample_vecs, sample_labels, self.classes)
 
 class PytorchDistanceFunction(DistanceFunction):
     '''
@@ -496,22 +497,26 @@ class SamplesLossTensorized(CostFunction):
                                           x_labels, y_labels,
                                           gaussian=gaussian_class_distance)
         
-        class_vals_xx = self.label_distances(x_vals, x_vals, 
-                                          x_labels, x_labels,
-                                          gaussian=gaussian_class_distance)
-        
-        
-        class_vals_yy = self.label_distances(y_vals, y_vals, 
-                                          y_labels, y_labels,
-                                          gaussian=gaussian_class_distance)
-        
         d_xy = torch.tensor(get_class_matrix(x_labels, y_labels, *class_vals_xy)).type_as(x_vals)
         
         d_yx = d_xy.T
-        
-        d_xx = torch.tensor(get_class_matrix(x_labels, x_labels, *class_vals_xx)).type_as(x_vals)
-        
-        d_yy = torch.tensor(get_class_matrix(y_labels, y_labels, *class_vals_yy)).type_as(x_vals)
+
+        if self.keops_routine.debias:
+            class_vals_xx = self.label_distances(x_vals, x_vals, 
+                                            x_labels, x_labels,
+                                            gaussian=gaussian_class_distance)
+            
+            
+            class_vals_yy = self.label_distances(y_vals, y_vals, 
+                                            y_labels, y_labels,
+                                            gaussian=gaussian_class_distance)
+
+            d_xx = torch.tensor(get_class_matrix(x_labels, x_labels, *class_vals_xx)).type_as(x_vals)
+            
+            d_yy = torch.tensor(get_class_matrix(y_labels, y_labels, *class_vals_yy)).type_as(x_vals)
+        else:
+            d_xx = None 
+            d_yy = None 
 
         x_weights = self.get_sample_weights(x_vals.shape[0])
         y_weights = self.get_sample_weights(y_vals.shape[0])
@@ -549,15 +554,17 @@ class SamplesLossTensorized(CostFunction):
         class_vals_xy = self.label_distances(x_vals, y_vals, 
                                           x_labels, y_labels,
                                           gaussian=gaussian_class_distance)
-        
-        class_vals_xx = self.label_distances(x_vals, x_vals, 
-                                          x_labels, x_labels,
-                                          gaussian=gaussian_class_distance)
-        
-        
-        class_vals_yy = self.label_distances(y_vals, y_vals, 
-                                          y_labels, y_labels,
-                                          gaussian=gaussian_class_distance)
+
+
+        if self.keops_routine.debias:
+            class_vals_xx = self.label_distances(x_vals, x_vals, 
+                                            x_labels, x_labels,
+                                            gaussian=gaussian_class_distance)
+            
+            
+            class_vals_yy = self.label_distances(y_vals, y_vals, 
+                                            y_labels, y_labels,
+                                            gaussian=gaussian_class_distance)
             
         
         for i in range(num_iterations):
@@ -583,9 +590,12 @@ class SamplesLossTensorized(CostFunction):
 
             d_yx = d_xy.T
 
-            d_xx = torch.tensor(get_class_matrix(label_x, label_x, *class_vals_xx)).type_as(x_vals)
-
-            d_yy = torch.tensor(get_class_matrix(label_y, label_y, *class_vals_yy)).type_as(x_vals)
+            if self.keops_routine.debias:
+                d_xx = torch.tensor(get_class_matrix(label_x, label_x, *class_vals_xx)).type_as(x_vals)
+                d_yy = torch.tensor(get_class_matrix(label_y, label_y, *class_vals_yy)).type_as(x_vals)
+            else:
+                d_xx = None
+                d_yy = None 
 
             cost, coupling, C_xy, transport = self.keops_routine.routine(x_weights, sample_x, 
                                                                         y_weights, sample_y,
@@ -654,21 +664,25 @@ class SamplesLossOnline(SamplesLossTensorized):
         class_vals_xy = self.label_distances(x_vals, y_vals, 
                                           x_labels, y_labels,
                                           gaussian=gaussian_class_distance)
-        
-        class_vals_xx = self.label_distances(x_vals, x_vals, 
-                                          x_labels, x_labels,
-                                          gaussian=gaussian_class_distance)
-        
-        
-        class_vals_yy = self.label_distances(y_vals, y_vals, 
-                                          y_labels, y_labels,
-                                          gaussian=gaussian_class_distance)
-    
-        class_xx = self.factor_matrix(class_vals_xx[0], x_labels, x_labels)
-        class_yy = self.factor_matrix(class_vals_yy[0], y_labels, y_labels)
+
         class_xy = self.factor_matrix(class_vals_xy[0], x_labels, y_labels)
         class_yx = [class_xy[1].clone(), class_xy[0].clone()]
-        # class_yx = self.factor_matrix(class_vals_xy[0].T, y_labels, x_labels)
+
+        if self.keops_routine.debias:
+            class_vals_xx = self.label_distances(x_vals, x_vals, 
+                                            x_labels, x_labels,
+                                            gaussian=gaussian_class_distance)
+            
+            
+            class_vals_yy = self.label_distances(y_vals, y_vals, 
+                                            y_labels, y_labels,
+                                            gaussian=gaussian_class_distance)
+    
+            class_xx = self.factor_matrix(class_vals_xx[0], x_labels, x_labels)
+            class_yy = self.factor_matrix(class_vals_yy[0], y_labels, y_labels)
+        else:
+            class_xx = None 
+            class_yy = None 
 
         x_weights = self.get_sample_weights(x_vals.shape[0])
         y_weights = self.get_sample_weights(y_vals.shape[0])
@@ -707,14 +721,15 @@ class SamplesLossOnline(SamplesLossTensorized):
                                           x_labels, y_labels,
                                           gaussian=gaussian_class_distance)
         
-        class_vals_xx = self.label_distances(x_vals, x_vals, 
-                                          x_labels, x_labels,
-                                          gaussian=gaussian_class_distance)
-        
-        
-        class_vals_yy = self.label_distances(y_vals, y_vals, 
-                                          y_labels, y_labels,
-                                          gaussian=gaussian_class_distance)
+        if self.keops_routine.debias:
+            class_vals_xx = self.label_distances(x_vals, x_vals, 
+                                            x_labels, x_labels,
+                                            gaussian=gaussian_class_distance)
+            
+            
+            class_vals_yy = self.label_distances(y_vals, y_vals, 
+                                            y_labels, y_labels,
+                                            gaussian=gaussian_class_distance)
             
         
         for i in range(num_iterations):
@@ -736,8 +751,13 @@ class SamplesLossOnline(SamplesLossTensorized):
             x_weights = x_weights.type_as(sample_x)
             y_weights = y_weights.type_as(sample_y)
 
-            class_xx = self.factor_matrix(class_vals_xx[0], label_x, label_x)
-            class_yy = self.factor_matrix(class_vals_yy[0], label_y, label_y)
+            if self.keops_routine.debias:
+                class_xx = self.factor_matrix(class_vals_xx[0], label_x, label_x)
+                class_yy = self.factor_matrix(class_vals_yy[0], label_y, label_y)
+            else:
+                class_xx = None 
+                class_yy = None
+
             class_xy = self.factor_matrix(class_vals_xy[0], label_x, label_y)
             class_yx = [class_xy[1].clone(), class_xy[0].clone()]
 

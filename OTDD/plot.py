@@ -15,6 +15,9 @@ import holoviews.operation.datashader as hd
 def plot_coupling(coupling, distance_matrix, row_labels, col_labels,
                   row_classes, col_classes, figsize=(10,10), cmap='OrRd'):
 
+    row_labels = np.array(row_classes)[row_labels]
+    col_labels = np.array(col_classes)[col_labels]
+    
     cmap = cm.get_cmap(cmap)
 
     plt_im = tf.shade(ds.Canvas(plot_width=1200, plot_height=1200).raster(xr.DataArray(coupling*distance_matrix), 
