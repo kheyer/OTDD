@@ -4,7 +4,7 @@ import numpy as np
 
 import sys
 sys.path.append('../OTDD/')
-from otdd import ArrayDataset
+from otdd_pytorch import TensorDataset
 
 def get_mnist_data():
     mnist_transform=transforms.Compose([
@@ -23,10 +23,10 @@ def get_mnist_data():
         mnist_feats.append(feats)
         mnist_labels.append(labels)
 
-    mnist_feats = torch.cat(mnist_feats).view(len(mnist_train), -1).numpy()
-    mnist_labels = torch.tensor(mnist_labels).numpy()
+    mnist_feats = torch.cat(mnist_feats).view(len(mnist_train), -1)
+    mnist_labels = torch.tensor(mnist_labels)
 
-    mnist_data = ArrayDataset(mnist_feats, mnist_labels)
+    mnist_data = TensorDataset(mnist_feats, mnist_labels)
     
     return mnist_data
 
@@ -49,10 +49,10 @@ def get_usps_data():
         usps_feats.append(feats)
         usps_labels.append(labels)
 
-    usps_feats = torch.cat(usps_feats).view(len(usps_train), -1).numpy()
-    usps_labels = torch.tensor(usps_labels).numpy()
+    usps_feats = torch.cat(usps_feats).view(len(usps_train), -1)
+    usps_labels = torch.tensor(usps_labels)
 
-    usps_data = ArrayDataset(usps_feats, usps_labels)
+    usps_data = TensorDataset(usps_feats, usps_labels)
     
     return usps_data
 

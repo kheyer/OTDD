@@ -497,7 +497,7 @@ class SamplesLossTensorized(CostFunction):
                                           x_labels, y_labels,
                                           gaussian=gaussian_class_distance)
         
-        d_xy = torch.tensor(get_class_matrix(x_labels, y_labels, *class_vals_xy)).type_as(x_vals)
+        d_xy = get_class_matrix(x_labels, y_labels, *class_vals_xy).type_as(x_vals)
         
         d_yx = d_xy.T
 
@@ -511,9 +511,9 @@ class SamplesLossTensorized(CostFunction):
                                             y_labels, y_labels,
                                             gaussian=gaussian_class_distance)
 
-            d_xx = torch.tensor(get_class_matrix(x_labels, x_labels, *class_vals_xx)).type_as(x_vals)
+            d_xx = get_class_matrix(x_labels, x_labels, *class_vals_xx).type_as(x_vals)
             
-            d_yy = torch.tensor(get_class_matrix(y_labels, y_labels, *class_vals_yy)).type_as(x_vals)
+            d_yy = get_class_matrix(y_labels, y_labels, *class_vals_yy).type_as(x_vals)
         else:
             d_xx = None 
             d_yy = None 
