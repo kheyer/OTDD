@@ -322,7 +322,7 @@ class CostFunction():
         
         print('computing')
         for i, c1 in enumerate(class_x):
-            print(i)
+            # print(i)
             for j, c2 in enumerate(class_y):
                 sample_x = x_vals[x_labels==c1]
                 sample_y = y_vals[y_labels==c2]
@@ -372,8 +372,6 @@ class CostFunction():
         
         if not gaussian_data_distance:
             M_dist = self.distance_function(x_vals, y_vals, mask_diagonal)
-
-            # dz = np.zeros(M_dist.shape)
 
             dz = get_class_matrix(x_labels, y_labels, class_distances, class_x_dict, class_y_dict)
 
@@ -461,8 +459,9 @@ class CostFunction():
             dataset_y = dataset_x
             mask_diagonal=True
 
-        class_distances, class_x_dict, class_y_dict = label_distances(dataset_x.features, dataset_y.features, 
-                                                    x_labels, y_labels, max_iter=None, gaussian=True)
+        class_distances, class_x_dict, class_y_dict = self.label_distances(dataset_x.features, dataset_y.features, 
+                                                    dataset_x.labels, dataset_y.labels, 
+                                                    max_iter=None, gaussian=True)
 
         for i in range(num_iterations):
 

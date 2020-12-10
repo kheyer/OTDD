@@ -11,6 +11,8 @@ import holoviews as hv
 from holoviews.operation.datashader import datashade, directly_connect_edges
 import holoviews.operation.datashader as hd
 
+hv.extension('bokeh')
+
 
 def plot_coupling(coupling, distance_matrix, row_labels, col_labels,
                   row_classes, col_classes, figsize=(10,10), cmap='OrRd'):
