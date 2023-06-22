@@ -7,7 +7,8 @@ import numpy as np
 from functools import partial
 from geomloss.sinkhorn_samples import scaling_parameters, sinkhorn_loop, sinkhorn_cost
 from geomloss.sinkhorn_samples import softmin_tensorized, log_weights
-from geomloss.utils import Sqrt0, sqrt_0, squared_distances, distances
+# from geomloss.utils import Sqrt0, sqrt_0, squared_distances, distances
+from geomloss.utils import squared_distances, distances
 from pykeops.torch import generic_logsumexp, LazyTensor
 
 class TensorDataset():
